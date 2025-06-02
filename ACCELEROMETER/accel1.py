@@ -1,4 +1,4 @@
-'''USING QWIIC KX13X LIBRARY'''
+'''USING QWIIC KX13X LIBRARY [ https://github.com/sparkfun/Qwiic_KX13X_Py ]'''
 '''Current Data Rate: 200Hz'''
 
 import qwiic_kx13x
