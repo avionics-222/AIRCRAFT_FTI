@@ -1,3 +1,4 @@
+'''Logs after printing hence, the logs are slower '''
 import time
 import ADS1263
 import RPi.GPIO as GPIO
