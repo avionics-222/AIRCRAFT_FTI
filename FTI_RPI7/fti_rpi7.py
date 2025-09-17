@@ -12,7 +12,8 @@ import traceback
 # ---- Config ----
 RS485_PORT = '/dev/ttyAMA0'
 BAUD_RATE = 9600
-LOG_DIR = "logs"
+LOG_DIR = "FTI_logs"
+SENSOR_LABELS = ["Temp8", "Temp6", "Temp9", "Temp10"]  # Custom labels for each PT100 sensor
 temperatures_offsets = [0.0, 0.0, 0.0, 0.0]  # Calibration offsets for each sensor; adjust as needed
 
 # ---- Logging ----
@@ -63,7 +64,7 @@ def csv_writer_process(data_queue, filename, stop_event):
         os.makedirs(os.path.dirname(filename), exist_ok=True)
         with open(filename, mode='w', newline='') as file:
             writer = csv.writer(file)
-            writer.writerow(["Timestamp", "Temp1_C", "Temp2_C", "Temp3_C", "Temp4_C"])
+            writer.writerow(["Timestamp"] + [f"{label}_C" for label in SENSOR_LABELS])
             print(f"Logging to {filename}... Press Ctrl+C to stop.")
             
             last_print_time = time.time()
@@ -78,8 +79,8 @@ def csv_writer_process(data_queue, filename, stop_event):
                     current_time = time.time()
                     if current_time - last_print_time >= 1.0:
                         print_str = f"[{timestamp}] "
-                        for i in range(4):
-                            print_str += f"Temp{i+1}: {adjusted_temps[i]:.2f} °C | "
+                        for i, label in enumerate(SENSOR_LABELS):
+                            print_str += f"{label}: {adjusted_temps[i]:.2f} °C | "
                         print(print_str.rstrip(" | "))
                         last_print_time = current_time
                         
