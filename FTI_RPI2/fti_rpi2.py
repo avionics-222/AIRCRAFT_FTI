@@ -18,8 +18,8 @@ STRAIN_RATE = 0.01
 LOG_DIR = "FTI_logs"
 
 # User-configurable sensor counts (change these to test fewer sensors)
-NUM_ACCEL = 2  # Number of accelerometers to use (1-5)
-NUM_STRAIN = 2  # Number of strain gauges to use (1-4)
+NUM_ACCEL = 4  # Number of accelerometers to use (1-5)
+NUM_STRAIN = 4  # Number of strain gauges to use (1-4)
 
 # Full sensor configurations (max values)
 MAX_ACCEL = 5
