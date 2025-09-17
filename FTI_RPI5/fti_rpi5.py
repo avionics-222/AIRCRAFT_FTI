@@ -1,0 +1,174 @@
+import time
+import threading
+import queue
+import csv
+import os
+import sys
+from datetime import datetime
+import Spi_kx13x
+
+# Configuration constants
+ACCEL_RATE = 0.01
+LOG_DIR = "FTI_logs"
+
+# User-configurable sensor count (fixed to 3 accelerometers)
+NUM_ACCEL = 3  # Number of accelerometers to use (fixed at 3)
+MAX_ACCEL = 3
+ACCEL_LABELS_FULL = ["Accel1", "Accel2", "Accel3"]
+ACCEL_CS_PINS_FULL = [20, 21, 19]
+
+# Validate input
+if NUM_ACCEL != 3:
+    raise ValueError(f"NUM_ACCEL must be 3")
+
+# Dynamic sensor labels and pins
+ACCEL_LABELS = ACCEL_LABELS_FULL[:NUM_ACCEL]
+ACCEL_CS_PINS = ACCEL_CS_PINS_FULL[:NUM_ACCEL]
+
+# Dynamic CSV header based on sensor count
+CSV_HEADER = ["Timestamp"]
+for i in range(NUM_ACCEL):
+    CSV_HEADER.extend([
+        f"{ACCEL_LABELS[i]}_X (g)", f"{ACCEL_LABELS[i]}_Y (g)", f"{ACCEL_LABELS[i]}_Z (g)"
+    ])
+
+def accel_thread(data_queue, stop_event, spi_lock, sensor, accel_idx, label):
+    try:
+        print(f"Initializing KX134 accelerometer {accel_idx} on SPI bus 0, CS GPIO {ACCEL_CS_PINS[accel_idx-1]}...")
+        with spi_lock:
+            who_am_i = sensor.read_register(0x13)
+        print(f"[{label}] WHO_AM_I = 0x{who_am_i:02X}")
+        
+        with spi_lock:
+            sensor.enable_accel(False)
+            sensor.set_output_data_rate(0x06)
+            sensor.set_range(0x00)
+            sensor.enable_accel(True)
+        
+        while not stop_event.is_set():
+            with spi_lock:
+                x, y, z = sensor.get_accel_data()
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+            data_queue.put((f"accel{accel_idx}", timestamp, x, y, z))
+            time.sleep(ACCEL_RATE)
+            
+    except Exception as e:
+        print(f"[{label}] Error: {e}")
+        stop_event.set()
+
+def csv_writer_thread(data_queue, filename, stop_event):
+    try:
+        os.makedirs(LOG_DIR, exist_ok=True)
+        with open(filename, mode='w', newline='') as file:
+            writer = csv.writer(file)
+            writer.writerow(CSV_HEADER)
+            print(f"Logging to {filename}... Press Ctrl+C to stop.")
+            
+            last_data = {f"accel{i+1}": None for i in range(NUM_ACCEL)}
+            last_print_time = time.time()
+            
+            while not stop_event.is_set():
+                try:
+                    sensor_type, timestamp, x, y, z = data_queue.get(timeout=0.01)
+                    last_data[sensor_type] = (timestamp, x, y, z)
+                    
+                    if all(last_data[f"accel{i+1}"] for i in range(NUM_ACCEL)):
+                        latest_timestamp = max(
+                            *[data[0] for data in last_data.values()]
+                        )
+                        row = [latest_timestamp]
+                        for i in range(NUM_ACCEL):
+                            accel_data = last_data[f"accel{i+1}"]
+                            row.extend([
+                                accel_data[1] if accel_data[1] is not None else "",
+                                accel_data[2] if accel_data[2] is not None else "",
+                                accel_data[3] if accel_data[3] is not None else ""
+                            ])
+                        
+                        writer.writerow(row)
+                        
+                        current_time = time.time()
+                        if current_time - last_print_time >= 0.1:
+                            print_str = f"[{latest_timestamp}] "
+                            for i in range(NUM_ACCEL):
+                                accel_data = last_data[f"accel{i+1}"]
+                                x = accel_data[1] if accel_data[1] is not None else 0.0
+                                y = accel_data[2] if accel_data[2] is not None else 0.0
+                                z = accel_data[3] if accel_data[3] is not None else 0.0
+                                print_str += f"{ACCEL_LABELS[i]}_X: {x:.3f} g | {ACCEL_LABELS[i]}_Y: {y:.3f} g | {ACCEL_LABELS[i]}_Z: {z:.3f} g | "
+                            print(print_str.rstrip(" | "))
+                            last_print_time = current_time
+                        
+                except queue.Empty:
+                    continue
+                    
+    except Exception as e:
+        print(f"[CSV Writer] Error: {e}")
+        stop_event.set()
+
+def main():
+    sensors = []
+    try:
+        # Create timestamped filename with dynamic labels
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = os.path.join(LOG_DIR, f"{'_'.join(ACCEL_LABELS)}_log_{timestamp}.csv")
+        
+        # Create stop event, queue, lock
+        stop_event = threading.Event()
+        data_queue = queue.Queue()
+        spi_lock = threading.Lock()
+        
+        # Create sensors
+        for i in range(NUM_ACCEL):
+            cs_pin = ACCEL_CS_PINS[i]
+            sensor = Spi_kx13x.KX134_SPI(bus=0, cs_pin=cs_pin)
+            sensors.append(sensor)
+        
+        # Create threads
+        accel_threads = []
+        for i in range(NUM_ACCEL):
+            accel_t = threading.Thread(
+                target=accel_thread,
+                args=(data_queue, stop_event, spi_lock, sensors[i], i+1, ACCEL_LABELS[i]),
+                daemon=True
+            )
+            accel_threads.append(accel_t)
+        writer_t = threading.Thread(
+            target=csv_writer_thread,
+            args=(data_queue, filename, stop_event),
+            daemon=True
+        )
+        
+        # Start threads
+        for accel_t in accel_threads:
+            accel_t.start()
+        writer_t.start()
+        
+        # Keep main thread alive
+        while True:
+            time.sleep(1)
+            
+    except KeyboardInterrupt:
+        print("\nStopping program...")
+        stop_event.set()
+        
+        # Join threads with timeout
+        for accel_t in accel_threads:
+            accel_t.join(timeout=5.0)
+        writer_t.join(timeout=5.0)
+        
+        if any(accel_t.is_alive() for accel_t in accel_threads) or writer_t.is_alive():
+            print("Some threads did not exit cleanly; forcing shutdown.")
+        
+        print("Program terminated. Data saved to CSV.")
+        
+    except Exception as e:
+        print(f"Main error: {e}")
+        
+    finally:
+        for sensor in sensors:
+            sensor.close()
+        sys.exit(0)
+
+if __name__ == "__main__":
+    main()
