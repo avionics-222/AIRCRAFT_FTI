@@ -16,7 +16,7 @@ import traceback
 # ---- Config ----
 RS485_PORT = '/dev/ttyAMA0'
 BAUD_RATE = 9600
-REF = 3.3
+REF = 5.0
 FLOW_SENSOR_PINS = [23, 24]
 FLOW_FACTORS = [9.9, 9.89]
 DEV_IDS = [1, 2, 3, 4]
