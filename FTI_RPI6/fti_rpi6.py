@@ -20,6 +20,11 @@ REF = 3.3
 FLOW_SENSOR_PINS = [23, 24]
 FLOW_FACTORS = [9.9, 9.89]
 DEV_IDS = [1, 2, 3, 4]
+SENSOR_LABELS = {
+    'pressure': ['Pressure1', 'Pressure2', 'Pressure3', 'Pressure4'],
+    'flow': ['Flow1', 'Flow2'],
+    'temp': ['Temp4', 'Temp2', 'Temp11', 'Temp12']
+}
 
 pulse_counts = [0, 0]
 off_t = [0.0, 0.0, 0.0, 0.0]
@@ -27,9 +32,11 @@ off_t = [0.0, 0.0, 0.0, 0.0]
 LOG_DIR = "logs"
 CSV_HEADER = [
     "Timestamp",
-    "Pressure1_Bar", "Pressure2_Bar", "Pressure3_Bar", "Pressure4_Bar",
-    "Flow1_Lpm", "Flow2_Lpm",
-    "Temp1_C", "Temp2_C", "Temp3_C", "Temp4_C"
+    f"{SENSOR_LABELS['pressure'][0]}_Bar", f"{SENSOR_LABELS['pressure'][1]}_Bar",
+    f"{SENSOR_LABELS['pressure'][2]}_Bar", f"{SENSOR_LABELS['pressure'][3]}_Bar",
+    f"{SENSOR_LABELS['flow'][0]}_Lpm", f"{SENSOR_LABELS['flow'][1]}_Lpm",
+    f"{SENSOR_LABELS['temp'][0]}_C", f"{SENSOR_LABELS['temp'][1]}_C",
+    f"{SENSOR_LABELS['temp'][2]}_C", f"{SENSOR_LABELS['temp'][3]}_C"
 ]
 
 # ---- Logging ----
@@ -96,7 +103,7 @@ def pressure_thread(data_queue, stop_event, i2c_lock, ads, channels):
                         bar = 0 if (0.82 * bar - 0.017) < 0 else (0.82 * bar - 0.017)
                         pressures.append(bar)
                     except Exception as e:
-                        print(f"Error reading channel {i}: {e}")
+                        print(f"Error reading {SENSOR_LABELS['pressure'][i]}: {e}")
                         pressures.append(-1.0)
                     time.sleep(0.1)
             ts = datetime.now()
@@ -175,12 +182,12 @@ def csv_writer_thread(data_queue, filename, stop_event):
                         current_time = time.time()
                         if current_time - last_print_time >= print_interval:
                             print_str = f"[{ts_str}] "
-                            for i, v in enumerate(p, 1):
-                                print_str += f"Pressure{i}: {v:.3f} Bar | "
-                            for i, v in enumerate(f, 1):
-                                print_str += f"Flow{i}: {v:.2f} Lpm | "
-                            for i, v in enumerate(t, 1):
-                                print_str += f"Temp{i}: {v:.2f} °C | "
+                            for i, v in enumerate(p):
+                                print_str += f"{SENSOR_LABELS['pressure'][i]}: {v:.3f} Bar | "
+                            for i, v in enumerate(f):
+                                print_str += f"{SENSOR_LABELS['flow'][i]}: {v:.2f} Lpm | "
+                            for i, v in enumerate(t):
+                                print_str += f"{SENSOR_LABELS['temp'][i]}: {v:.2f} °C | "
                             print(print_str.rstrip(" | "))
                             last_print_time = current_time
                         
