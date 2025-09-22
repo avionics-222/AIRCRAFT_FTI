@@ -2,7 +2,7 @@ import spidev
 import lgpio
 
 class KX134_SPI:
-    def __init__(self, bus=0, device=0, speed=100000, cs_pin=None):
+    def __init__(self, bus=0, device=1, speed=100000, cs_pin=None):
         self.spi = spidev.SpiDev()
         self.cs_pin = cs_pin
         self.use_gpio_cs = cs_pin is not None
