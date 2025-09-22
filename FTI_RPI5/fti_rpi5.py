@@ -4,28 +4,30 @@ import queue
 import csv
 import os
 import sys
+import traceback
 from datetime import datetime
 import Spi_kx13x
 
 # Configuration constants
-ACCEL_RATE = 0.01
+ACCEL_RATE = 0.01  # 100 Hz data production
+LOG_RATE = 0.01    # 100 Hz logging to CSV
 LOG_DIR = "FTI_logs"
 
-# User-configurable sensor count (fixed to 3 accelerometers)
-NUM_ACCEL = 3  # Number of accelerometers to use (fixed at 3)
-MAX_ACCEL = 3
-ACCEL_LABELS_FULL = ["Accel1", "Accel2", "Accel3"]
-ACCEL_CS_PINS_FULL = [20, 21, 19]
+# User-configurable sensor counts
+NUM_ACCEL = 3  # Number of accelerometers to use (1-5)
+MAX_ACCEL = 5
+ACCEL_LABELS_FULL = ["Accel2", "Accel3", "Accel4", "Accel0", "Accel0"]
+ACCEL_CS_PINS_FULL = [21, 5, 6, 12, 13]
 
 # Validate input
-if NUM_ACCEL != 3:
-    raise ValueError(f"NUM_ACCEL must be 3")
+if NUM_ACCEL < 1 or NUM_ACCEL > MAX_ACCEL:
+    raise ValueError(f"NUM_ACCEL must be between 1 and {MAX_ACCEL}")
 
 # Dynamic sensor labels and pins
 ACCEL_LABELS = ACCEL_LABELS_FULL[:NUM_ACCEL]
 ACCEL_CS_PINS = ACCEL_CS_PINS_FULL[:NUM_ACCEL]
 
-# Dynamic CSV header based on sensor count
+# Dynamic CSV header
 CSV_HEADER = ["Timestamp"]
 for i in range(NUM_ACCEL):
     CSV_HEADER.extend([
@@ -41,7 +43,7 @@ def accel_thread(data_queue, stop_event, spi_lock, sensor, accel_idx, label):
         
         with spi_lock:
             sensor.enable_accel(False)
-            sensor.set_output_data_rate(0x06)
+            sensor.set_output_data_rate(0x07)  # Set ODR to 100 Hz to match sampling rate
             sensor.set_range(0x00)
             sensor.enable_accel(True)
         
@@ -54,6 +56,7 @@ def accel_thread(data_queue, stop_event, spi_lock, sensor, accel_idx, label):
             
     except Exception as e:
         print(f"[{label}] Error: {e}")
+        traceback.print_exc()
         stop_event.set()
 
 def csv_writer_thread(data_queue, filename, stop_event):
@@ -68,42 +71,49 @@ def csv_writer_thread(data_queue, filename, stop_event):
             last_print_time = time.time()
             
             while not stop_event.is_set():
-                try:
-                    sensor_type, timestamp, x, y, z = data_queue.get(timeout=0.01)
-                    last_data[sensor_type] = (timestamp, x, y, z)
+                # Drain the queue to get the latest data from all sensors
+                while True:
+                    try:
+                        sensor_type, timestamp, x, y, z = data_queue.get_nowait()
+                        last_data[sensor_type] = (timestamp, x, y, z)
+                    except queue.Empty:
+                        break
+                
+                # If all data available, write one row
+                if all(last_data[f"accel{i+1}"] for i in range(NUM_ACCEL)):
+                    latest_timestamp = max(
+                        *[data[0] for data in last_data.values()]
+                    )
+                    row = [latest_timestamp]
+                    for i in range(NUM_ACCEL):
+                        accel_data = last_data[f"accel{i+1}"]
+                        row.extend([
+                            accel_data[1] if accel_data[1] is not None else "",
+                            accel_data[2] if accel_data[2] is not None else "",
+                            accel_data[3] if accel_data[3] is not None else ""
+                        ])
                     
-                    if all(last_data[f"accel{i+1}"] for i in range(NUM_ACCEL)):
-                        latest_timestamp = max(
-                            *[data[0] for data in last_data.values()]
-                        )
-                        row = [latest_timestamp]
-                        for i in range(NUM_ACCEL):
-                            accel_data = last_data[f"accel{i+1}"]
-                            row.extend([
-                                accel_data[1] if accel_data[1] is not None else "",
-                                accel_data[2] if accel_data[2] is not None else "",
-                                accel_data[3] if accel_data[3] is not None else ""
-                            ])
-                        
-                        writer.writerow(row)
-                        
-                        current_time = time.time()
-                        if current_time - last_print_time >= 0.1:
-                            print_str = f"[{latest_timestamp}] "
-                            for i in range(NUM_ACCEL):
-                                accel_data = last_data[f"accel{i+1}"]
-                                x = accel_data[1] if accel_data[1] is not None else 0.0
-                                y = accel_data[2] if accel_data[2] is not None else 0.0
-                                z = accel_data[3] if accel_data[3] is not None else 0.0
-                                print_str += f"{ACCEL_LABELS[i]}_X: {x:.3f} g | {ACCEL_LABELS[i]}_Y: {y:.3f} g | {ACCEL_LABELS[i]}_Z: {z:.3f} g | "
-                            print(print_str.rstrip(" | "))
-                            last_print_time = current_time
-                        
-                except queue.Empty:
-                    continue
-                    
+                    writer.writerow(row)
+                    file.flush()
+                
+                # Print if time
+                current_time = time.time()
+                if current_time - last_print_time >= 0.1:
+                    print_str = f"[{latest_timestamp}] "
+                    for i in range(NUM_ACCEL):
+                        accel_data = last_data[f"accel{i+1}"]
+                        x = accel_data[1] if accel_data[1] is not None else 0.0
+                        y = accel_data[2] if accel_data[2] is not None else 0.0
+                        z = accel_data[3] if accel_data[3] is not None else 0.0
+                        print_str += f"{ACCEL_LABELS[i]}_X: {x:.3f} g | {ACCEL_LABELS[i]}_Y: {y:.3f} g | {ACCEL_LABELS[i]}_Z: {z:.3f} g | "
+                    print(print_str.rstrip(" | "))
+                    last_print_time = current_time
+                
+                time.sleep(LOG_RATE)  # Enforce 100 Hz loop rate
+                
     except Exception as e:
         print(f"[CSV Writer] Error: {e}")
+        traceback.print_exc()
         stop_event.set()
 
 def main():
@@ -118,13 +128,13 @@ def main():
         data_queue = queue.Queue()
         spi_lock = threading.Lock()
         
-        # Create sensors
+        # Create sensors based on NUM_ACCEL
         for i in range(NUM_ACCEL):
             cs_pin = ACCEL_CS_PINS[i]
             sensor = Spi_kx13x.KX134_SPI(bus=0, cs_pin=cs_pin)
             sensors.append(sensor)
         
-        # Create threads
+        # Create threads based on NUM_ACCEL
         accel_threads = []
         for i in range(NUM_ACCEL):
             accel_t = threading.Thread(
@@ -164,6 +174,7 @@ def main():
         
     except Exception as e:
         print(f"Main error: {e}")
+        traceback.print_exc()
         
     finally:
         for sensor in sensors:
